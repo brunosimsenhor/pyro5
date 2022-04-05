@@ -1,1 +1,4 @@
 Pyro5==5.13.1
+cryptography==36.0.2
+pymongo==4.1.0
+dnspython==2.2.1
