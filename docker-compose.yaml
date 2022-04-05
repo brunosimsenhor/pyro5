@@ -1,0 +1,33 @@
+version: "3.9" # optional since v1.27.0
+services:
+  nameserver:
+    build: .
+    command: pyro5-ns -n nameserver
+    ports:
+      - 9090
+
+  server:
+    build: .
+    depends_on:
+      - nameserver
+    command: "python -u greeting-server.py"
+    environment:
+      - "NS_HOST=nameserver"
+    volumes:
+      - ./:/app
+
+  client:
+    build: .
+    depends_on:
+      - nameserver
+    command: "python -u greeting-client.py"
+    environment:
+      - "NS_HOST=nameserver"
+      - "NAME=Bruno"
+    volumes:
+      - ./:/app
+  # sleep:
+  #   image: alpine:3.15
+  #   depends_on:
+  #     - nameserver
+  #   command: "sleep infinity"
