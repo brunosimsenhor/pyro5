@@ -40,7 +40,7 @@ services:
   server:
     build: .
     depends_on:
-      - nameserver
+      - "nameserver"
     command: "python -u survey-server.py"
     environment:
       - "NS_HOST=nameserver"
@@ -51,8 +51,9 @@ services:
   client:
     build: .
     depends_on:
-      - nameserver
-    command: "python -u survey-client.py"
+      - "nameserver"
+    # command: "python -u survey-client.py"
+    command: "sleep infinity"
     environment:
       - "NS_HOST=nameserver"
     volumes:

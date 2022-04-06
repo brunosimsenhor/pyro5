@@ -5,6 +5,8 @@ import base64
 import serpent
 import Pyro5.api
 
+from contextlib import suppress
+
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
@@ -30,14 +32,15 @@ class SurveyRegister(object):
     def __init__(self, stufflist=[]):
         self.client_collection = db.clients
         self.survey_collection = db.surveys
+        self.votes_collection = db.votes
 
     def persist_client(self, name: str, public_key: str, pyro_ref: str):
         data = {
-            "_id": str(uuid.uuid4()),
-            "name": name,
-            "public_key": public_key,
-            "pyro_ref": pyro_ref,
-            "logged": True,
+            '_id': str(uuid.uuid4()),
+            'name': name,
+            'public_key': public_key,
+            'pyro_ref': pyro_ref,
+            'logged': True,
         }
 
         self.client_collection.insert_one(data)
@@ -46,22 +49,42 @@ class SurveyRegister(object):
 
     def persist_survey(self, title: str, created_by: str, local: str, due_date: datetime, options: list[str]):
         data = {
-            "_id": str(uuid.uuid4()),
-            "title": title,
-            "created_by": created_by,
-            "local": local,
-            "due_date": datetime.datetime.fromisoformat('2022-04-08T12:00:00'),
-            "options": options,
+            '_id': str(uuid.uuid4()),
+            'title': title,
+            'created_by': created_by,
+            'local': local,
+            'due_date': datetime.datetime.fromisoformat(due_date),
+            'options': options,
         }
-
-        print("data")
-        print(data)
 
         self.survey_collection.insert_one(data)
 
         return data
 
-    def notify_clients(self, survey_data: dict):
+    def persist_vote(self, _id: str, survey_id: str, option: str):
+        vote_id = '{0}/{1}'.format(_id, survey_id)
+
+        with suppress(pymongo.errors.DuplicateKeyError):
+            self.votes_collection.insert_one({ '_id': vote_id, 'option': str(option) })
+
+            return True
+
+        return False
+
+    # notifies logged clients with surveys
+    def notify_clients_new_survey(self, survey: dict):
+        for client in self.client_collection.find({ 'logged': True }):
+            client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
+
+            try:
+                client_proxy.notify(survey)
+            except (Pyro5.errors.NamingError, Pyro5.errors.CommunicationError) as e:
+                self.set_logged(client['_id'], False)
+
+        return True
+
+    # notifies logged clients with surveys
+    def notify_clients_new_vote(self, survey):
         for client in self.client_collection.find({ 'logged': True }):
             client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
@@ -69,10 +92,27 @@ class SurveyRegister(object):
                 client_proxy.notify(survey_data)
             except (Pyro5.errors.NamingError, Pyro5.errors.CommunicationError) as e:
                 self.set_logged(client['_id'], False)
-                # self.client_collection.delete_one({ '_id': client['_id'] })
 
         return True
 
+    # verify a given message signature
+    def verify_signature(self, client: dict, message, signature):
+        # loading its public key from database
+        public_key = load_pem_public_key(client["public_key"].encode('utf-8'))
+
+        try:
+            # verify a signature against the public key
+            public_key.verify(signature, message, hashes.SHA256())
+            return True
+
+        # on invalid signature, we just pass
+        except InvalidSignature:
+            pass
+
+        # on every other case, we return false
+        return False
+
+    # set the client as logged and active, on database
     def set_logged(self, _id: str, flag: bool):
         self.client_collection.update_one({ '_id': _id }, { '$set': { 'logged': flag }})
 
@@ -103,8 +143,6 @@ class SurveyRegister(object):
 
     @Pyro5.server.expose
     def login(self, _id: str, signature) -> bool:
-        # print('_id: {0}'.format(_id))
-
         # finding the client on the database
         client = self.client_collection.find_one({ "_id": _id })
 
@@ -112,31 +150,22 @@ class SurveyRegister(object):
         if not client:
             return False, 'client not found'
 
-        # loading its public key from database
-        public_key = load_pem_public_key(client["public_key"].encode('utf-8'))
-
         # serpent helper
         signature = serpent.tobytes(signature)
 
-        try:
-            verification = public_key.verify(
-                signature,
-                _id.encode('utf-8'),
-                hashes.SHA256()
-            )
-
+        if self.verify_signature(client, _id.encode('utf-8'), signature):
             self.set_logged(_id, True)
 
             print('[login][success][{0}]'.format(_id))
             return True, ''
 
         # on invalid signature, we log it and return false
-        except InvalidSignature:
+        else:
             print('[login][failure][{0}]'.format(_id))
             return False, 'invalid signature'
 
     @Pyro5.server.expose
-    def get_available_surveys(self) -> list:
+    def list_available_surveys(self) -> list:
         surveys = []
 
         for row in self.survey_collection.find({ "due_date": { "$gte": datetime.datetime.now() }}):
@@ -170,6 +199,39 @@ class SurveyRegister(object):
         print('[create_survey][success][{0}]'.format(survey['_id']))
 
         return True, survey
+
+    @Pyro5.server.expose
+    def vote_survey_option(self, _id: str, survey_id: str, option: str, signature) -> list:
+        client = self.client_collection.find_one({ "_id": _id })
+        survey = self.survey_collection.find_one({ "_id": survey_id })
+
+        # if the client was not found
+        if not client:
+            return False, 'client not found'
+
+        # if the client was not found
+        if not survey:
+            return False, 'survey not found'
+
+        if option not in survey['options']:
+            return False, 'option not found'
+
+        # serpent helper
+        signature = serpent.tobytes(signature)
+
+        # verifying the signature
+        if self.verify_signature(client, option.encode('utf-8'), signature):
+            if self.persist_vote(_id, survey_id, option):
+                self.notify_clients_new_survey(survey)
+                print('[voted][success][{0}][{1}]'.format(client['_id'], survey['_id']))
+            else:
+                print('[voted][already][{0}][{1}]'.format(client['_id'], survey['_id']))
+
+            return True, ''
+
+        else:
+            print('[voted][failure][{0}][{1}]'.format(client['_id'], survey['_id']))
+            return False, 'invalid signature'
 
 daemon = Pyro5.server.Daemon(host = hostname) # make a Pyro daemon
 ns = Pyro5.api.locate_ns()                    # find the name server

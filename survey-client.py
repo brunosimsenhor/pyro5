@@ -63,9 +63,6 @@ class SurveyPrompt(cmd.Cmd):
     def __init__(self, stufflist=[]):
         cmd.Cmd.__init__(self)
 
-        # Gerando uma chave privada
-        self.private_key = private_key
-
         # Perguntando o nome do usuário
         self.username = None
 
@@ -94,7 +91,8 @@ class SurveyPrompt(cmd.Cmd):
         if user_data and user_data['_id']:
             _id = user_data['_id']
 
-            signature = private_key.sign(_id.encode('utf-8'), hashes.SHA256())
+            # signature = private_key.sign(_id.encode('utf-8'), hashes.SHA256())
+            signature = self.sign_message(_id)
 
             status, _ = self.survey_server.login(_id, signature)
 
@@ -102,7 +100,7 @@ class SurveyPrompt(cmd.Cmd):
 
         else:
             # Gerando a string da chave pública para registrar o cliente no serviço de enquete.
-            public_bytes = self.private_key.public_key().public_bytes(
+            public_bytes = private_key.public_key().public_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PublicFormat.SubjectPublicKeyInfo
             )
@@ -123,9 +121,21 @@ class SurveyPrompt(cmd.Cmd):
 
         self.daemon_thread = threading.Thread(target=threaded_daemon)
 
+    # signing a message
+    def sign_message(self, message: str):
+        return private_key.sign(message.encode('utf-8'), hashes.SHA256())
+
     @Pyro5.server.expose
-    def notify(self, survey):
-        print('Nova enquete criada: {0}'.format(data['title']))
+    def notify_survey(self, survey):
+        print('Enquete criada: {0}'.format(data['title']))
+
+        return True
+
+    @Pyro5.server.expose
+    def notify_vote(self, survey, client_name):
+        print('Voto registrado')
+        print('Nome: {0}'.format(client_name))
+        print('Enquete: {0}'.format(data['title']))
 
         return True
 
@@ -179,15 +189,19 @@ class SurveyPrompt(cmd.Cmd):
     def do_listar(self, arg):
         'Lista as enquetes disponíveis.'
 
-        surveys = self.survey_server.get_available_surveys()
+        surveys = self.survey_server.list_available_surveys()
 
         if len(surveys) > 0:
             print('Enquetes disponíveis:')
             print('-----------')
 
             for survey in surveys:
+                print('ID: {0}'.format(survey['_id']))
                 print('Título: {0}'.format(survey['title']))
                 print('Criado por: {0}'.format(survey['created_by']))
+                print('Opções:')
+                for survey_option in survey['options']:
+                    print(survey_option)
                 print('-----------')
 
         else:
@@ -196,7 +210,25 @@ class SurveyPrompt(cmd.Cmd):
 
     def do_votar(self, arg):
         'Vota em uma opção de uma determinada enquete...'
-        raise Exception('Não implementado')
+
+        survey_id = None
+        survey = None
+
+        while not survey_id:
+            survey_id = input('Qual o ID da enquete? ')
+
+        option = None
+
+        while not option:
+            option = input('Em qual opção você deseja votar? ')
+
+        status, message = self.survey_server.vote_survey_option(self.client_data['_id'], survey_id, option, self.sign_message(option))
+
+        if status:
+            print('Voto registrado!')
+
+        else:
+            print('Erro: {0}'.format(message))
 
     def do_sair(self, arg):
         'Deregistra você do serviço de enquete e encerra esse cliente.'
