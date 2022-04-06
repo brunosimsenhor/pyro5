@@ -1,7 +1,16 @@
 import os
 import uuid
 import datetime
+import base64
+import serpent
 import Pyro5.api
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
+from cryptography.hazmat.primitives.asymmetric import utils
+from cryptography.hazmat.primitives.asymmetric import padding
+
 from typing import Any
 
 import pymongo
@@ -83,8 +92,40 @@ class SurveyRegister(object):
         return True
 
     @Pyro5.server.expose
+    def login(self, _id: str, signature) -> bool:
+        # print('_id: {0}'.format(_id))
+
+        # finding the client on the database
+        client = self.client_collection.find_one({ "_id": _id })
+
+        # if the client was not found
+        if not client:
+            return False, 'client not found'
+
+        # loading its public key from database
+        public_key = load_pem_public_key(client["public_key"].encode('utf-8'))
+
+        # serpent helper
+        signature = serpent.tobytes(signature)
+
+        try:
+            verification = public_key.verify(
+                signature,
+                _id.encode('utf-8'),
+                hashes.SHA256()
+            )
+
+            print('[login][success][{0}]'.format(_id))
+            return True, ''
+
+        # on invalid signature, we log it and return false
+        except InvalidSignature:
+            print('[login][failure][{0}]'.format(_id))
+            return False, 'invalid signature'
+
+    @Pyro5.server.expose
     def get_available_surveys(self) -> list:
-        return list(self.survey_collection.find({ "due_date": { "$gte": datetime.datetime.now() }}))
+        return list(self.survey_collection.find({ "due_date": { "$lte": datetime.datetime.now() }}))
 
     @Pyro5.server.expose
     def create_survey(self, title: str, created_by: str, local: str, due_date: datetime, options: list[datetime]) -> tuple[bool, Any]:
@@ -92,7 +133,7 @@ class SurveyRegister(object):
             return False, "invalid title"
 
         if not created_by:
-            return False, "created_by"
+            return False, "invalid created_by"
 
         if not local:
             return False, "invalid local"

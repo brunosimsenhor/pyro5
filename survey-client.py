@@ -4,16 +4,54 @@ import sys
 import threading
 import datetime
 import json
+import serpent
 import Pyro5.api
 
 from contextlib import suppress
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import dsa
+from cryptography.hazmat.primitives.asymmetric import utils
+from cryptography.hazmat.primitives.asymmetric import padding
+
+SERPENT_BYTES_REPR = True
+
+PRIVATE_KEY_PATH = "/app/private.pem"
+USER_DATA_PATH = "/app/user.json"
+
+# retrieving private
+if os.path.exists(PRIVATE_KEY_PATH):
+    # loading private key from disk
+    with open(PRIVATE_KEY_PATH, "rb") as key_file:
+        private_key = serialization.load_pem_private_key(
+            key_file.read(),
+            password = None,
+        )
+
+else:
+    # generating the private file
+    private_key = dsa.generate_private_key(
+        key_size = 1024,
+    )
+
+    # writing it to disk
+    with open(PRIVATE_KEY_PATH, "w") as key_file:
+        pem = private_key.private_bytes(
+            encoding = serialization.Encoding.PEM,
+            format = serialization.PrivateFormat.PKCS8,
+            encryption_algorithm = serialization.NoEncryption()
+        )
+
+        for i in pem.splitlines():
+            key_file.write('{0}\n'.format(i.decode('ASCII')))
+
+# loading user data
 user_data = None
 
-with open('/app/user.json', 'r') as f:
-    data = json.load(f)
+if os.path.exists(USER_DATA_PATH):
+    with open(USER_DATA_PATH, 'r') as f:
+        user_data = json.load(f)
 
 class SurveyClient(object):
     @Pyro5.server.expose
@@ -28,10 +66,13 @@ class SurveyPrompt(cmd.Cmd):
         cmd.Cmd.__init__(self)
 
         # Gerando uma chave privada
-        self.private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        self.private_key = private_key
 
         # Perguntando o nome do usuário
         self.username = None
+
+        if user_data and user_data['name']:
+            self.username = user_data['name']
 
         while not self.username:
             self.username = input('Por favor, digite seu nome: ')
@@ -42,28 +83,53 @@ class SurveyPrompt(cmd.Cmd):
         # Buscando serviço de enquete no serviço de nomes.
         self.survey_server = Pyro5.api.Proxy('PYRONAME:survey.server')
 
-        # Gerando a string da chave pública para registrar o cliente no serviço de enquete.
-        public_bytes = self.private_key.public_key().public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo
-        )
+        status = False
+        data = 'unknown'
 
-        # Registrando o usuário no serviço de enquetes e guardamos o retorno para uso futuro.
-        status, data = self.survey_server.register(self.username, public_bytes.decode('ascii'), pyro_ref)
+        # already have user data?
+        if user_data and user_data['_id']:
+            _id = user_data['_id']
+
+            signature = private_key.sign(_id.encode('utf-8'), hashes.SHA256())
+
+            status, _ = self.survey_server.login(_id, signature)
+
+            data = user_data
+
+        else:
+            # Gerando a string da chave pública para registrar o cliente no serviço de enquete.
+            public_bytes = self.private_key.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+
+            # Registrando o usuário no serviço de enquetes e guardamos o retorno para uso futuro.
+            status, data = self.survey_server.register(self.username, public_bytes.decode('ascii'), pyro_ref)
+
+            with open(USER_DATA_PATH, 'w') as f:
+                json.dump(data, f, sort_keys=True)
 
         if status == True:
             self.client_data = data
+
         else:
             raise Exception('Não conseguimos nos registrar no serviço de enquetes: {0}'.format(data))
 
         print("Olá, {0}! Bem-vindo ao serviço de enquetes! Digite 'help' para descobrir o que posso fazer!".format(self.username))
 
-        self.daemon_thread = threading.Thread(target=daemon.requestLoop)
+        # self.daemon_thread = threading.Thread(target=daemon.requestLoop)
+
+    def _login(_id, private_key):
+        signature = private_key.sign(_id.encode('utf-8'), hashes.SHA256())
+
+        status, _ = self.survey_server.login(_id, signature)
+
+        data = user_data
 
     def postcmd(self, stop, line):
         # todo: implementar notificações aqui
 
-        return line
+        return stop
 
     def do_nova(self, arg):
         'Cria uma nova enquete. Os outros usuários do serviço são notificados.'
