@@ -61,11 +61,9 @@ class SurveyRegister(object):
 
         return data
 
-    def persist_vote(self, _id: str, survey_id: str, option: str):
-        vote_id = '{0}/{1}'.format(_id, survey_id)
-
-        with suppress(pymongo.errors.DuplicateKeyError):
-            self.votes_collection.insert_one({ '_id': vote_id, 'option': str(option) })
+    def persist_vote(self, client_id: str, survey_id: str, option: str):
+        if self.votes_collection.count_documents({ 'client_id': client_id, 'survey_id': survey_id }) == 0:
+            self.votes_collection.insert_one({ 'client_id': client_id, 'survey_id': survey_id, 'option': str(option) })
 
             return True
 

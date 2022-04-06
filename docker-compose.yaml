@@ -41,7 +41,20 @@ services:
     build: .
     depends_on:
       - "nameserver"
+      - "db"
     command: "python -u survey-server.py"
+    environment:
+      - "NS_HOST=nameserver"
+      - "DB_URI=mongodb://db:27017/surveys"
+    volumes:
+      - ./:/app
+
+  cron:
+    build: .
+    depends_on:
+      - "nameserver"
+      - "db"
+    command: "python -u survey-cron.py"
     environment:
       - "NS_HOST=nameserver"
       - "DB_URI=mongodb://db:27017/surveys"
