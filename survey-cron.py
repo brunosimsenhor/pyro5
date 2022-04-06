@@ -12,18 +12,24 @@ client = MongoClient(db_uri)
 db = client.surveys
 
 def closing_surveys():
+    # retrieve surveys to be closed
     surveys = list(db.surveys.find({ 'closed': False, 'due_date': { '$lte': datetime.datetime.now() }}))
 
     print('surveys found: {0}'.format(len(surveys)))
 
+    # iterate through the results
     for survey in surveys:
+        # change it on the database
         db.surveys.update_one({ '_id': survey['_id'] }, { '$set': { 'closed': True }})
 
-        client = db.clients.find_one({ '_id': survey['created_by'] })
+        # retrieving the only a logged client
+        client = db.clients.find_one({ '_id': survey['created_by'], 'logged': False })
 
-        if client['logged'] == False
+        # skip this if no client found
+        if not client:
             continue
 
+        # when a client is found, we build the Pyro5 proxy
         proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
         try:
