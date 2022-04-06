@@ -36,37 +36,45 @@ class SurveyRegister(object):
             "_id": str(uuid.uuid4()),
             "name": name,
             "public_key": public_key,
-            "pyro_ref": pyro_ref
+            "pyro_ref": pyro_ref,
+            "logged": True,
         }
 
         self.client_collection.insert_one(data)
 
         return data
 
-    def persist_survey(self, title: str, created_by: str, local: str, due_date: str, options: list[str]):
+    def persist_survey(self, title: str, created_by: str, local: str, due_date: datetime, options: list[str]):
         data = {
             "_id": str(uuid.uuid4()),
             "title": title,
             "created_by": created_by,
             "local": local,
-            "due_date": due_date,
-            "options": options
+            "due_date": datetime.datetime.fromisoformat('2022-04-08T12:00:00'),
+            "options": options,
         }
+
+        print("data")
+        print(data)
 
         self.survey_collection.insert_one(data)
 
         return data
 
     def notify_clients(self, survey_data: dict):
-        for row in self.client_collection.find({ "deleted_at": { "$exists": False }}):
-            client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(row['pyro_ref']))
+        for client in self.client_collection.find({ 'logged': True }):
+            client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
             try:
                 client_proxy.notify(survey_data)
-            except PyroError:
-                self.client_collection.delete_one({ "_id": row["_id"] })
+            except (Pyro5.errors.NamingError, Pyro5.errors.CommunicationError) as e:
+                self.set_logged(client['_id'], False)
+                # self.client_collection.delete_one({ '_id': client['_id'] })
 
         return True
+
+    def set_logged(self, _id: str, flag: bool):
+        self.client_collection.update_one({ '_id': _id }, { '$set': { 'logged': flag }})
 
     @Pyro5.server.expose
     def register(self, name: str, public_key: str, pyro_ref: str) -> tuple[bool, dict]:
@@ -86,8 +94,10 @@ class SurveyRegister(object):
         return True, client_data
 
     @Pyro5.server.expose
-    def unregister(self, _id: str) -> bool:
-        self.client_collection.update_one({ "_id": _id }, { '$set': { "deleted_at": datetime.datetime.now() }})
+    def logout(self, _id: str) -> bool:
+        self.set_logged(_id, False)
+
+        print('[logout][success][{0}]'.format(_id))
 
         return True
 
@@ -115,6 +125,8 @@ class SurveyRegister(object):
                 hashes.SHA256()
             )
 
+            self.set_logged(_id, True)
+
             print('[login][success][{0}]'.format(_id))
             return True, ''
 
@@ -125,7 +137,13 @@ class SurveyRegister(object):
 
     @Pyro5.server.expose
     def get_available_surveys(self) -> list:
-        return list(self.survey_collection.find({ "due_date": { "$lte": datetime.datetime.now() }}))
+        surveys = []
+
+        for row in self.survey_collection.find({ "due_date": { "$gte": datetime.datetime.now() }}):
+            row['created_by'] = self.client_collection.find_one({ '_id': row['created_by'] })['name']
+            surveys.append(row)
+
+        return surveys
 
     @Pyro5.server.expose
     def create_survey(self, title: str, created_by: str, local: str, due_date: datetime, options: list[datetime]) -> tuple[bool, Any]:
@@ -148,6 +166,8 @@ class SurveyRegister(object):
             return False, "invalid options"
 
         survey = self.persist_survey(title, created_by, local, due_date, options)
+
+        print('[create_survey][success][{0}]'.format(survey['_id']))
 
         return True, survey
 

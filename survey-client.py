@@ -15,7 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import dsa
 from cryptography.hazmat.primitives.asymmetric import utils
 from cryptography.hazmat.primitives.asymmetric import padding
 
-SERPENT_BYTES_REPR = True
+hostname = os.getenv('HOSTNAME')
 
 PRIVATE_KEY_PATH = "/app/private.pem"
 USER_DATA_PATH = "/app/user.json"
@@ -53,11 +53,9 @@ if os.path.exists(USER_DATA_PATH):
     with open(USER_DATA_PATH, 'r') as f:
         user_data = json.load(f)
 
-class SurveyClient(object):
-    @Pyro5.server.expose
-    def subscribe(self, data):
-        print('Nova enquete criada: {0}'.format(data['title']))
-        return True
+def threaded_daemon(daemon):
+    print('Starting Pyro daemon...')
+    daemon.requestLoop()
 
 class SurveyPrompt(cmd.Cmd):
     prompt = '>>> '
@@ -77,7 +75,13 @@ class SurveyPrompt(cmd.Cmd):
         while not self.username:
             self.username = input('Por favor, digite seu nome: ')
 
+        # Pyro
+        daemon = Pyro5.server.Daemon(host = hostname)
+        nameserver = Pyro5.api.locate_ns()
+        uri = daemon.register(SurveyPrompt)
+
         # Registramos o cliente no serviço de nomes, adicionamos uma metadata para agrupar todos os clientes.
+        pyro_ref = 'survey.client.{0}'.format(hostname)
         nameserver.register(pyro_ref, uri, metadata = {'survey.client'})
 
         # Buscando serviço de enquete no serviço de nomes.
@@ -117,14 +121,13 @@ class SurveyPrompt(cmd.Cmd):
 
         print("Olá, {0}! Bem-vindo ao serviço de enquetes! Digite 'help' para descobrir o que posso fazer!".format(self.username))
 
-        # self.daemon_thread = threading.Thread(target=daemon.requestLoop)
+        self.daemon_thread = threading.Thread(target=threaded_daemon)
 
-    def _login(_id, private_key):
-        signature = private_key.sign(_id.encode('utf-8'), hashes.SHA256())
+    @Pyro5.server.expose
+    def notify(self, survey):
+        print('Nova enquete criada: {0}'.format(data['title']))
 
-        status, _ = self.survey_server.login(_id, signature)
-
-        data = user_data
+        return True
 
     def postcmd(self, stop, line):
         # todo: implementar notificações aqui
@@ -149,7 +152,6 @@ class SurveyPrompt(cmd.Cmd):
             with suppress(ValueError): due_date = datetime.datetime.strptime(aux, '%d/%m/%Y %H:%M')
 
         print('Adicione três opções para sua enquete, no formato: \'dd/mm/aaaa hh:ii\'.')
-        # print('Pressione ctrl+d quando terminar de adicionar.')
 
         count = 1
         options = []
@@ -181,15 +183,16 @@ class SurveyPrompt(cmd.Cmd):
 
         if len(surveys) > 0:
             print('Enquetes disponíveis:')
+            print('-----------')
 
             for survey in surveys:
-                print('-----------')
                 print('Título: {0}'.format(survey['title']))
                 print('Criado por: {0}'.format(survey['created_by']))
                 print('-----------')
 
         else:
             print('Nenhuma enquete encontrada')
+            print('-----------')
 
     def do_votar(self, arg):
         'Vota em uma opção de uma determinada enquete...'
@@ -199,16 +202,9 @@ class SurveyPrompt(cmd.Cmd):
         'Deregistra você do serviço de enquete e encerra esse cliente.'
 
         print('Deregistrado do serviço de enquete! Até a próxima!')
-        self.survey_server.unregister(self.client_data['_id'])
+        self.survey_server.logout(self.client_data['_id'])
+
         sys.exit(0)
-
-hostname = os.getenv('HOSTNAME')
-
-# Pyro
-daemon      = Pyro5.server.Daemon(host = hostname) # make a Pyro daemon
-nameserver  = Pyro5.api.locate_ns()            # find the name server
-uri         = daemon.register(SurveyClient) # register the survey client as a Pyro object
-pyro_ref = 'survey.client.{0}'.format(hostname)
 
 # Pseudo-terminal
 sp = SurveyPrompt(sys.argv[1:])
