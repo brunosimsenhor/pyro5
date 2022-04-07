@@ -86,26 +86,18 @@ class SurveyClient:
 
     @Pyro5.server.expose
     def notify_new_survey(self, survey):
-        print('Enquete criada: {0}'.format(survey['title']))
-
         new_survey_queue.put(survey)
 
         return True
 
     @Pyro5.server.expose
     def notify_closed_survey(self, survey):
-        print('Enquete encerrada: {0}'.format(survey['title']))
-
         closed_survey_queue.put(survey)
 
         return True
 
     @Pyro5.server.expose
     def notify_vote(self, survey, client_name, option):
-        print('Voto registrado')
-        print('Nome: {0}'.format(client_name))
-        print('Enquete: {0}'.format(survey['title']))
-
         vote_queue.put({
             'survey': survey,
             'client_name': client_name,

@@ -202,6 +202,8 @@ class SurveyRegister(object):
 
         print('[create_survey][success][{0}]'.format(survey['_id']))
 
+        self.notify_clients_new_survey(survey)
+
         return True, survey
 
     @Pyro5.server.expose
