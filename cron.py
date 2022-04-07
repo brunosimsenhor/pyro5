@@ -15,7 +15,8 @@ def closing_surveys():
     # retrieve surveys to be closed
     surveys = list(db.surveys.find({ 'closed': False, 'due_date': { '$lte': datetime.datetime.now() }}))
 
-    print('surveys found: {0}'.format(len(surveys)))
+    if len(surveys) > 0:
+        print('surveys found: {0}'.format(len(surveys)))
 
     # iterate through the results
     for survey in surveys:

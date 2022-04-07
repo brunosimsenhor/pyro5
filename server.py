@@ -34,6 +34,7 @@ class SurveyRegister(object):
         self.survey_collection = db.surveys
         self.votes_collection = db.votes
 
+    # persists a client
     def persist_client(self, name: str, public_key: str, pyro_ref: str):
         data = {
             '_id': str(uuid.uuid4()),
@@ -47,6 +48,7 @@ class SurveyRegister(object):
 
         return data
 
+    # persists a survey
     def persist_survey(self, title: str, created_by: str, local: str, due_date: datetime, options: list[str]):
         data = {
             '_id': str(uuid.uuid4()),
@@ -54,6 +56,7 @@ class SurveyRegister(object):
             'created_by': created_by,
             'local': local,
             'due_date': datetime.datetime.fromisoformat(due_date),
+            'closed': False,
             'options': options,
         }
 
@@ -61,6 +64,12 @@ class SurveyRegister(object):
 
         return data
 
+    def close_survey(self, survey_id: str) -> bool:
+        self.survey_collection.update_one({ '_id': survey_id }, { '$set': { 'closed': True }})
+
+        return True
+
+    # tries to persists a vote, if the client didn't vote that survey
     def persist_vote(self, client_id: str, survey_id: str, option: str):
         if self.votes_collection.count_documents({ 'client_id': client_id, 'survey_id': survey_id }) == 0:
             self.votes_collection.insert_one({ 'client_id': client_id, 'survey_id': survey_id, 'option': str(option) })
@@ -69,14 +78,28 @@ class SurveyRegister(object):
 
         return False
 
+    # checks if the survey was voted by all clients
+    def check_survey(self, survey):
+        if self.votes_collection.count_documents({ 'survey_id': survey['_id'] }) >= 3:
+            return True
+
+        return False
+
     # notifies logged clients with surveys
     def notify_clients_new_survey(self, survey: dict):
         for client in self.client_collection.find({ 'logged': True }):
+            print('[notify][{0}] beginning...'.format(client['_id']))
             client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
             try:
                 client_proxy.notify_new_survey(survey)
-            except (Pyro5.errors.NamingError, Pyro5.errors.CommunicationError) as e:
+
+            except Pyro5.errors.NamingError as e:
+                print('[notify][{0}] naming error: {1}'.format(client['_id'], str(e)))
+                self.set_logged(client['_id'], False)
+
+            except Pyro5.errors.CommunicationError as e:
+                print('[notify][{0}] communication error: {1}'.format(client['_id'], str(e)))
                 self.set_logged(client['_id'], False)
 
         return True
@@ -84,15 +107,37 @@ class SurveyRegister(object):
     # notifies logged clients with surveys
     def notify_clients_new_vote(self, survey: dict, client: dict, option: str):
         for client in self.client_collection.find({ 'logged': True }):
-            print('[notify][{0}] beginning...')
+            print('[notify][{0}] beginning...'.format(client['_id']))
             client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
             try:
                 client_proxy.notify_vote(survey, client['name'], option)
                 print('[notify][{0}] notified'.format(client['_id']))
+
             except Pyro5.errors.NamingError as e:
                 print('[notify][{0}] naming error: {1}'.format(client['_id'], str(e)))
                 self.set_logged(client['_id'], False)
+
+            except Pyro5.errors.CommunicationError as e:
+                print('[notify][{0}] communication error: {1}'.format(client['_id'], str(e)))
+                self.set_logged(client['_id'], False)
+
+        return True
+
+    # notifies logged clients with surveys
+    def notify_clients_closed_survey(self, survey: dict):
+        for client in self.client_collection.find({ 'logged': True }):
+            print('[notify][{0}] beginning...'.format(client['_id']))
+            client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
+
+            try:
+                client_proxy.notify_closed_survey(survey)
+                print('[notify][{0}] notified'.format(client['_id']))
+
+            except Pyro5.errors.NamingError as e:
+                print('[notify][{0}] naming error: {1}'.format(client['_id'], str(e)))
+                self.set_logged(client['_id'], False)
+
             except Pyro5.errors.CommunicationError as e:
                 print('[notify][{0}] communication error: {1}'.format(client['_id'], str(e)))
                 self.set_logged(client['_id'], False)
@@ -172,7 +217,7 @@ class SurveyRegister(object):
     def list_available_surveys(self) -> list:
         surveys = []
 
-        for row in self.survey_collection.find({ 'closed': False, 'due_date': { '$gte': datetime.datetime.now() }}):
+        for row in self.survey_collection.find({ 'closed': False }):
             row['created_by'] = self.client_collection.find_one({ '_id': row['created_by'] })['name']
             surveys.append(row)
 
@@ -215,10 +260,15 @@ class SurveyRegister(object):
         if not client:
             return False, 'client not found'
 
-        # if the client was not found
+        # if the survey was not found
         if not survey:
             return False, 'survey not found'
 
+        # if the survey is already closed
+        if survey['closed'] == True:
+            return False, 'survey already closed'
+
+        # the option do not belongs to this survey
         if option not in survey['options']:
             return False, 'option not found'
 
@@ -227,11 +277,20 @@ class SurveyRegister(object):
 
         # verifying the signature
         if self.verify_signature(client, option.encode('utf-8'), signature):
+            # persisting vote
             if self.persist_vote(_id, survey_id, option):
+                # notifies the clients about the vote
                 self.notify_clients_new_vote(survey, client, option)
+
                 print('[voted][success][{0}][{1}]'.format(client['_id'], survey['_id']))
+
             else:
                 print('[voted][already][{0}][{1}]'.format(client['_id'], survey['_id']))
+
+            # if all clients voted, we notify them and close the survey
+            if self.check_survey(survey):
+                self.notify_clients_closed_survey(survey)
+                self.close_survey(survey)
 
             return True, ''
 

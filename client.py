@@ -166,6 +166,10 @@ class SurveyPrompt(cmd.Cmd):
     def sign_message(self, message: str):
         return private_key.sign(message.encode('utf-8'), hashes.SHA256())
 
+    # used to avoid accidentally running the last command again
+    def emptyline(self):
+        pass
+
     def postcmd(self, stop, line):
         if (new_survey_queue.empty() and closed_survey_queue.empty() and vote_queue.empty()):
             print('Nenhuma notificação.')

@@ -57,3 +57,13 @@ services:
       - "NS_HOST=nameserver"
     volumes:
       - ./client.py:/app/client.py
+
+  client_3:
+    build: .
+    depends_on:
+      - "nameserver"
+    command: "sleep infinity"
+    environment:
+      - "NS_HOST=nameserver"
+    volumes:
+      - ./client.py:/app/client.py
