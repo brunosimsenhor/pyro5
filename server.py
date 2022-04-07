@@ -172,7 +172,7 @@ class SurveyRegister(object):
     def list_available_surveys(self) -> list:
         surveys = []
 
-        for row in self.survey_collection.find({ "due_date": { "$gte": datetime.datetime.now() }}):
+        for row in self.survey_collection.find({ 'closed': False, 'due_date': { '$gte': datetime.datetime.now() }}):
             row['created_by'] = self.client_collection.find_one({ '_id': row['created_by'] })['name']
             surveys.append(row)
 
@@ -228,11 +228,10 @@ class SurveyRegister(object):
         # verifying the signature
         if self.verify_signature(client, option.encode('utf-8'), signature):
             if self.persist_vote(_id, survey_id, option):
+                self.notify_clients_new_vote(survey, client, option)
                 print('[voted][success][{0}][{1}]'.format(client['_id'], survey['_id']))
             else:
                 print('[voted][already][{0}][{1}]'.format(client['_id'], survey['_id']))
-
-            self.notify_clients_new_vote(survey, client, option)
 
             return True, ''
 
