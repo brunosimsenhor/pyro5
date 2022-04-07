@@ -224,9 +224,7 @@ class SurveyPrompt(cmd.Cmd):
 
         status, survey = self.survey_server.create_survey(title, created_by, local, due_date, options)
 
-        if status == True:
-            print(survey)
-        else:
+        if status == False:
             print('Não conseguimos criar a enquete.')
 
     def do_listar(self, arg):
