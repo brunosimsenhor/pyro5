@@ -5,8 +5,6 @@ services:
     command: pyro5-ns -n nameserver
     environment:
       - "NS_AUTOCLEAN=3"
-    ports:
-      - 9090
 
   db:
     image: mongo:5.0.6
@@ -16,58 +14,46 @@ services:
     volumes:
       - ./db:/data/db/
 
-  # server:
-  #   build: .
-  #   depends_on:
-  #     - nameserver
-  #   command: "python -u greeting-server.py"
-  #   environment:
-  #     - "NS_HOST=nameserver"
-  #   volumes:
-  #     - ./:/app
-
-  # client:
-  #   build: .
-  #   depends_on:
-  #     - nameserver
-  #   command: "python -u greeting-client.py"
-  #   environment:
-  #     - "NS_HOST=nameserver"
-  #     - "NAME=Bruno"
-  #   volumes:
-  #     - ./:/app
-
   server:
     build: .
     depends_on:
       - "nameserver"
       - "db"
-    command: "python -u survey-server.py"
+    command: "python -u server.py"
     environment:
       - "NS_HOST=nameserver"
       - "DB_URI=mongodb://db:27017/surveys"
     volumes:
-      - ./:/app
+      - ./server.py:/app/server.py
 
   cron:
     build: .
     depends_on:
       - "nameserver"
       - "db"
-    command: "python -u survey-cron.py"
+    command: "python -u cron.py"
     environment:
       - "NS_HOST=nameserver"
       - "DB_URI=mongodb://db:27017/surveys"
     volumes:
-      - ./:/app
+      - ./cron.py:/app/cron.py
 
-  client:
+  client_1:
     build: .
     depends_on:
       - "nameserver"
-    # command: "python -u survey-client.py"
     command: "sleep infinity"
     environment:
       - "NS_HOST=nameserver"
     volumes:
-      - ./:/app
+      - ./client.py:/app/client.py
+
+  client_2:
+    build: .
+    depends_on:
+      - "nameserver"
+    command: "sleep infinity"
+    environment:
+      - "NS_HOST=nameserver"
+    volumes:
+      - ./client.py:/app/client.py

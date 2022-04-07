@@ -75,20 +75,26 @@ class SurveyRegister(object):
             client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
             try:
-                client_proxy.notify(survey)
+                client_proxy.notify_new_survey(survey)
             except (Pyro5.errors.NamingError, Pyro5.errors.CommunicationError) as e:
                 self.set_logged(client['_id'], False)
 
         return True
 
     # notifies logged clients with surveys
-    def notify_clients_new_vote(self, survey):
+    def notify_clients_new_vote(self, survey: dict, client: dict, option: str):
         for client in self.client_collection.find({ 'logged': True }):
+            print('[notify][{0}] beginning...')
             client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
             try:
-                client_proxy.notify(survey_data)
-            except (Pyro5.errors.NamingError, Pyro5.errors.CommunicationError) as e:
+                client_proxy.notify_vote(survey, client['name'], option)
+                print('[notify][{0}] notified'.format(client['_id']))
+            except Pyro5.errors.NamingError as e:
+                print('[notify][{0}] naming error: {1}'.format(client['_id'], str(e)))
+                self.set_logged(client['_id'], False)
+            except Pyro5.errors.CommunicationError as e:
+                print('[notify][{0}] communication error: {1}'.format(client['_id'], str(e)))
                 self.set_logged(client['_id'], False)
 
         return True
@@ -220,10 +226,11 @@ class SurveyRegister(object):
         # verifying the signature
         if self.verify_signature(client, option.encode('utf-8'), signature):
             if self.persist_vote(_id, survey_id, option):
-                self.notify_clients_new_survey(survey)
                 print('[voted][success][{0}][{1}]'.format(client['_id'], survey['_id']))
             else:
                 print('[voted][already][{0}][{1}]'.format(client['_id'], survey['_id']))
+
+            self.notify_clients_new_vote(survey, client, option)
 
             return True, ''
 

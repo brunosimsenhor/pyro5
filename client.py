@@ -4,7 +4,7 @@ import sys
 import threading
 import datetime
 import json
-import serpent
+import queue
 import Pyro5.api
 
 from contextlib import suppress
@@ -16,9 +16,19 @@ from cryptography.hazmat.primitives.asymmetric import utils
 from cryptography.hazmat.primitives.asymmetric import padding
 
 hostname = os.getenv('HOSTNAME')
+pyro_ref = 'survey.client.{0}'.format(hostname)
+
+pyro5_lives = True
+
+def should_pyro5_continues():
+    return pyro5_lives
 
 PRIVATE_KEY_PATH = "/app/private.pem"
 USER_DATA_PATH = "/app/user.json"
+
+closed_survey_queue = queue.Queue()
+new_survey_queue = queue.Queue()
+vote_queue = queue.Queue()
 
 # retrieving private
 if os.path.exists(PRIVATE_KEY_PATH):
@@ -53,9 +63,56 @@ if os.path.exists(USER_DATA_PATH):
     with open(USER_DATA_PATH, 'r') as f:
         user_data = json.load(f)
 
-def threaded_daemon(daemon):
+messages = []
+
+def start_pyro5_server():
     print('Starting Pyro daemon...')
-    daemon.requestLoop()
+    # Pyro
+    daemon = Pyro5.server.Daemon(host = hostname)
+    uri = daemon.register(SurveyClient)
+
+    # Registramos o cliente no serviço de nomes, adicionamos uma metadata para agrupar todos os clientes.
+    nameserver = Pyro5.api.locate_ns()
+    nameserver.register(pyro_ref, uri, metadata = {'survey.client'})
+
+    daemon.requestLoop(should_pyro5_continues)
+
+class SurveyClient:
+    def start():
+        pass
+
+    def stop():
+        pass
+
+    @Pyro5.server.expose
+    def notify_new_survey(self, survey):
+        print('Enquete criada: {0}'.format(survey['title']))
+
+        new_survey_queue.put(survey)
+
+        return True
+
+    @Pyro5.server.expose
+    def notify_closed_survey(self, survey):
+        print('Enquete encerrada: {0}'.format(survey['title']))
+
+        closed_survey_queue.put(survey)
+
+        return True
+
+    @Pyro5.server.expose
+    def notify_vote(self, survey, client_name, option):
+        print('Voto registrado')
+        print('Nome: {0}'.format(client_name))
+        print('Enquete: {0}'.format(survey['title']))
+
+        vote_queue.put({
+            'survey': survey,
+            'client_name': client_name,
+            'option': option,
+        })
+
+        return True
 
 class SurveyPrompt(cmd.Cmd):
     prompt = '>>> '
@@ -71,15 +128,6 @@ class SurveyPrompt(cmd.Cmd):
 
         while not self.username:
             self.username = input('Por favor, digite seu nome: ')
-
-        # Pyro
-        daemon = Pyro5.server.Daemon(host = hostname)
-        nameserver = Pyro5.api.locate_ns()
-        uri = daemon.register(SurveyPrompt)
-
-        # Registramos o cliente no serviço de nomes, adicionamos uma metadata para agrupar todos os clientes.
-        pyro_ref = 'survey.client.{0}'.format(hostname)
-        nameserver.register(pyro_ref, uri, metadata = {'survey.client'})
 
         # Buscando serviço de enquete no serviço de nomes.
         self.survey_server = Pyro5.api.Proxy('PYRONAME:survey.server')
@@ -119,37 +167,40 @@ class SurveyPrompt(cmd.Cmd):
 
         print("Olá, {0}! Bem-vindo ao serviço de enquetes! Digite 'help' para descobrir o que posso fazer!".format(self.username))
 
-        self.daemon_thread = threading.Thread(target=threaded_daemon)
+        self.pyro_thread = threading.Thread(target=start_pyro5_server, args=(), daemon=True)
+        self.pyro_thread.start()
 
     # signing a message
     def sign_message(self, message: str):
         return private_key.sign(message.encode('utf-8'), hashes.SHA256())
 
-    @Pyro5.server.expose
-    def notify_survey(self, survey):
-        print('Enquete criada: {0}'.format(data['title']))
-
-        return True
-
-    @Pyro5.server.expose
-    def notify_vote(self, survey, client_name):
-        print('Voto registrado')
-        print('Nome: {0}'.format(client_name))
-        print('Enquete: {0}'.format(data['title']))
-
-        return True
-
     def postcmd(self, stop, line):
-        # todo: implementar notificações aqui
+        if (new_survey_queue.empty() and closed_survey_queue.empty() and vote_queue.empty()):
+            print('Nenhuma notificação.')
+
+        while not new_survey_queue.empty():
+            survey = new_survey_queue.get()
+            print('Notificação: uma nova enquete foi criada: "{0}"'.format(survey['title']))
+            new_survey_queue.task_done()
+
+        while not closed_survey_queue.empty():
+            survey = closed_survey_queue.get()
+            print('Notificação: a enquete "{0}" foi finalizada.'.format(survey['title']))
+            closed_survey_queue.task_done()
+
+        while not vote_queue.empty():
+            vote = vote_queue.get()
+            print('Notificação: a opção "{0}" da enquete "{1}" recebeu um voto de "{2}".'.format(vote['option'], vote['client_name'], vote['survey']['title']))
+            vote_queue.task_done()
 
         return stop
 
     def do_nova(self, arg):
         'Cria uma nova enquete. Os outros usuários do serviço são notificados.'
 
-        title      = None
-        local      = None
-        due_date   = None
+        title = None
+        local = None
+        due_date = None
 
         while not title:
             title = input('Qual o título da enquete? ')
@@ -184,7 +235,7 @@ class SurveyPrompt(cmd.Cmd):
         if status == True:
             print(survey)
         else:
-            print('Não conseguimos criar a enquete: {0}'.format(data))
+            print('Não conseguimos criar a enquete.')
 
     def do_listar(self, arg):
         'Lista as enquetes disponíveis.'
@@ -233,8 +284,12 @@ class SurveyPrompt(cmd.Cmd):
     def do_sair(self, arg):
         'Deregistra você do serviço de enquete e encerra esse cliente.'
 
-        print('Deregistrado do serviço de enquete! Até a próxima!')
+        print('Desregistrando do serviço de enquete...')
         self.survey_server.logout(self.client_data['_id'])
+        print('Até a próxima!')
+
+        # this will trigger the exit of Pyro5 daemon
+        pyro5_lives = False
 
         sys.exit(0)
 
