@@ -234,7 +234,9 @@ class SurveyPrompt(cmd.Cmd):
     def do_listar(self, arg):
         'Lista as enquetes disponíveis.'
 
-        surveys = self.survey_server.list_available_surveys()
+        client_id = self.client_data['_id']
+
+        status, surveys = self.survey_server.list_available_surveys(client_id, self.sign_message(client_id))
 
         if len(surveys) > 0:
             print('Enquetes disponíveis:')
@@ -275,8 +277,32 @@ class SurveyPrompt(cmd.Cmd):
         else:
             print('Erro: {0}'.format(message))
 
+    def do_consultar(self, survey_id=None):
+        'Consulta uma enquete no serviço'
+
+        while not survey_id:
+            survey_id = input('Qual o ID da enquete? ')
+
+        client_id = self.client_data['_id']
+
+        status, data = self.survey_server.consult_survey(client_id, survey_id, self.sign_message(client_id))
+
+        if status:
+            print('Dados da enquete:')
+            print('ID: {0}'.format(data['_id']))
+            print('Título: {0}'.format(data['title']))
+            print('Criado por: {0}'.format(data['created_by']))
+            print('Opções:')
+            for survey_option in data['options']:
+                print(survey_option)
+            print('Votos:')
+
+        else:
+            print('Erro: {0}'.format(data))
+
+
     def do_sair(self, arg):
-        'Deregistra você do serviço de enquete e encerra esse cliente.'
+        'Desregistra você do serviço de enquete e encerra esse cliente.'
 
         print('Desregistrando do serviço de enquete...')
         self.survey_server.logout(self.client_data['_id'])

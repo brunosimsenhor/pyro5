@@ -23,8 +23,11 @@ def closing_surveys():
         # change it on the database
         db.surveys.update_one({ '_id': survey['_id'] }, { '$set': { 'closed': True }})
 
+        # retrieving client ids from the subscription collection
+        client_ids = db.subscriptions.find({ 'survey_id': survey['_id'], 'type': 'CLOSE' }, { 'client_id': True })
+
         # retrieving the only a logged client
-        client = db.clients.find_one({ '_id': survey['created_by'], 'logged': False })
+        client = db.clients.find({ '_id': client_ids, 'logged': True })
 
         # skip this if no client found
         if not client:

@@ -33,6 +33,7 @@ class SurveyRegister(object):
         self.client_collection = db.clients
         self.survey_collection = db.surveys
         self.votes_collection = db.votes
+        self.subscription_collection = db.subscriptions
 
     # persists a client
     def persist_client(self, name: str, public_key: str, pyro_ref: str):
@@ -49,11 +50,13 @@ class SurveyRegister(object):
         return data
 
     # persists a survey
-    def persist_survey(self, title: str, created_by: str, local: str, due_date: datetime, options: list[str]):
+    def persist_survey(self, title: str, client_id: str, local: str, due_date: datetime, options: list[str]):
+        survey_id = str(uuid.uuid4())
+
         data = {
-            '_id': str(uuid.uuid4()),
+            '_id': survey_id,
             'title': title,
-            'created_by': created_by,
+            'created_by': client_id,
             'local': local,
             'due_date': datetime.datetime.fromisoformat(due_date),
             'closed': False,
@@ -62,7 +65,22 @@ class SurveyRegister(object):
 
         self.survey_collection.insert_one(data)
 
+        self.persist_subscription(client_id, survey_id, 'CLOSE')
+
         return data
+
+    def persist_subscription(self, client_id: str, survey_id: str, subscription_type: str):
+        data = {
+            '_id': str(uuid.uuid4()),
+            'client_id': client_id,
+            'survey_id': survey_id,
+            'type': subscription_type,
+        }
+
+        if self.subscription_collection.count_documents(data) == 0:
+            self.subscription_collection.insert_one(data)
+
+        return True
 
     def close_survey(self, survey_id: str) -> bool:
         self.survey_collection.update_one({ '_id': survey_id }, { '$set': { 'closed': True }})
@@ -75,6 +93,8 @@ class SurveyRegister(object):
             self.votes_collection.insert_one({ 'client_id': client_id, 'survey_id': survey_id, 'option': str(option) })
 
             return True
+
+        self.persist_subscription(client_id, survey_id, 'CLOSE')
 
         return False
 
@@ -214,14 +234,66 @@ class SurveyRegister(object):
             return False, 'invalid signature'
 
     @Pyro5.server.expose
-    def list_available_surveys(self) -> list:
+    def list_available_surveys(self, _id: str, signature) -> tuple[bool, list]:
+        # finding the client on the database
+        client = self.client_collection.find_one({ "_id": _id })
+
+        # if the client was not found
+        if not client:
+            return False, 'client not found'
+
         surveys = []
+
+        # voted_surveys = [i['survey_id'] for i in db.votes.find({ 'client_id': client_id })]
+        # for row in self.survey_collection.find({ '_id': { '$nin': voted_surveys }, 'closed': False }):
 
         for row in self.survey_collection.find({ 'closed': False }):
             row['created_by'] = self.client_collection.find_one({ '_id': row['created_by'] })['name']
             surveys.append(row)
 
-        return surveys
+        return True, surveys
+
+    @Pyro5.server.expose
+    def consult_survey(self, client_id: str, survey_id: str, signature) -> tuple[bool, dict]:
+        client = self.client_collection.find_one({ '_id': client_id })
+        survey = self.survey_collection.find_one({ '_id': survey_id })
+
+        # if the client was not found
+        if not client:
+            return False, 'client not found'
+
+        # if the survey was not found
+        if not survey:
+            return False, 'survey not found'
+
+        signature = serpent.tobytes(signature)
+
+        print(signature)
+
+        if not self.verify_signature(client, client_id.encode('utf-8'), signature):
+            print('[login][failure][{0}]'.format(_id))
+            return False, 'invalid signature'
+
+        # checking if the client has voted this survey
+        voted = self.votes_collection.count_documents({ 'client_id': client_id, 'survey_id': survey_id }) > 0
+
+        print(voted)
+
+        if not voted:
+            return False, 'client vote was not registered in the survey'
+
+        # populating data to return to client
+        survey['votes'] = list(self.votes_collection.find({ 'survey_id': survey_id }))
+
+        print('banzai')
+
+        for vote in survey['votes']:
+            vote['client'] = self.client_collection.find_one({ '_id': vote['client_id'] }, { 'public_key': False })
+
+        print('banzai2')
+        print(survey)
+
+        return True, survey
 
     @Pyro5.server.expose
     def create_survey(self, title: str, created_by: str, local: str, due_date: datetime, options: list[datetime]) -> tuple[bool, Any]:
@@ -280,7 +352,7 @@ class SurveyRegister(object):
             # persisting vote
             if self.persist_vote(_id, survey_id, option):
                 # notifies the clients about the vote
-                self.notify_clients_new_vote(survey, client, option)
+                # self.notify_clients_new_vote(survey, client, option)
 
                 print('[voted][success][{0}][{1}]'.format(client['_id'], survey['_id']))
 
