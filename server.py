@@ -272,9 +272,6 @@ class SurveyRegister(object):
 
             survey['votes'][vote['option']].append(self.client_collection.find_one({ '_id': vote['client_id'] })['name'])
 
-        print('survey')
-        print(survey)
-
         return True, survey
 
     @Pyro5.server.expose

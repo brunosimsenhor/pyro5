@@ -287,9 +287,6 @@ class SurveyPrompt(cmd.Cmd):
 
         status, data = self.survey_server.consult_survey(client_id, survey_id, self.sign_message(client_id))
 
-        print('data')
-        print(data)
-
         if status:
             print('Dados da enquete:')
             print('ID: {0}'.format(data['_id']))
