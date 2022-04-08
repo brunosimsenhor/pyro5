@@ -287,6 +287,9 @@ class SurveyPrompt(cmd.Cmd):
 
         status, data = self.survey_server.consult_survey(client_id, survey_id, self.sign_message(client_id))
 
+        print('data')
+        print(data)
+
         if status:
             print('Dados da enquete:')
             print('ID: {0}'.format(data['_id']))
@@ -296,6 +299,8 @@ class SurveyPrompt(cmd.Cmd):
             for survey_option in data['options']:
                 print(survey_option)
             print('Votos:')
+            for option in data['votes']:
+                print('{0}: {1}'.format(option, ', '.join(data['votes'][option])))
 
         else:
             print('Erro: {0}'.format(data))

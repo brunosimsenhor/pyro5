@@ -24,7 +24,7 @@ def closing_surveys():
         db.surveys.update_one({ '_id': survey['_id'] }, { '$set': { 'closed': True }})
 
         # retrieving client ids from the subscription collection
-        client_ids = db.subscriptions.find({ 'survey_id': survey['_id'], 'type': 'CLOSE' }, { 'client_id': True })
+        client_ids = [i['client_id'] for i in db.votes.find({ 'survey_id': survey['_id'] })]
 
         # retrieving the only a logged client
         client = db.clients.find({ '_id': client_ids, 'logged': True })

@@ -33,7 +33,6 @@ class SurveyRegister(object):
         self.client_collection = db.clients
         self.survey_collection = db.surveys
         self.votes_collection = db.votes
-        self.subscription_collection = db.subscriptions
 
     # persists a client
     def persist_client(self, name: str, public_key: str, pyro_ref: str):
@@ -65,22 +64,7 @@ class SurveyRegister(object):
 
         self.survey_collection.insert_one(data)
 
-        self.persist_subscription(client_id, survey_id, 'CLOSE')
-
         return data
-
-    def persist_subscription(self, client_id: str, survey_id: str, subscription_type: str):
-        data = {
-            '_id': str(uuid.uuid4()),
-            'client_id': client_id,
-            'survey_id': survey_id,
-            'type': subscription_type,
-        }
-
-        if self.subscription_collection.count_documents(data) == 0:
-            self.subscription_collection.insert_one(data)
-
-        return True
 
     def close_survey(self, survey_id: str) -> bool:
         self.survey_collection.update_one({ '_id': survey_id }, { '$set': { 'closed': True }})
@@ -93,8 +77,6 @@ class SurveyRegister(object):
             self.votes_collection.insert_one({ 'client_id': client_id, 'survey_id': survey_id, 'option': str(option) })
 
             return True
-
-        self.persist_subscription(client_id, survey_id, 'CLOSE')
 
         return False
 
@@ -146,7 +128,9 @@ class SurveyRegister(object):
 
     # notifies logged clients with surveys
     def notify_clients_closed_survey(self, survey: dict):
-        for client in self.client_collection.find({ 'logged': True }):
+        client_ids = [i['client_id'] for i in db.votes.find({ 'survey_id': survey['_id'] })]
+
+        for client in self.client_collection.find({ '_id': {'$in': client_ids}, 'logged': True }):
             print('[notify][{0}] beginning...'.format(client['_id']))
             client_proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
@@ -268,8 +252,6 @@ class SurveyRegister(object):
 
         signature = serpent.tobytes(signature)
 
-        print(signature)
-
         if not self.verify_signature(client, client_id.encode('utf-8'), signature):
             print('[login][failure][{0}]'.format(_id))
             return False, 'invalid signature'
@@ -277,20 +259,20 @@ class SurveyRegister(object):
         # checking if the client has voted this survey
         voted = self.votes_collection.count_documents({ 'client_id': client_id, 'survey_id': survey_id }) > 0
 
-        print(voted)
-
         if not voted:
             return False, 'client vote was not registered in the survey'
 
         # populating data to return to client
-        survey['votes'] = list(self.votes_collection.find({ 'survey_id': survey_id }))
+        survey['votes'] = {}
+        votes = list(self.votes_collection.find({ 'survey_id': survey_id }))
 
-        print('banzai')
+        for vote in votes:
+            if not vote['option'] in survey['votes']:
+                survey['votes'][vote['option']] = []
 
-        for vote in survey['votes']:
-            vote['client'] = self.client_collection.find_one({ '_id': vote['client_id'] }, { 'public_key': False })
+            survey['votes'][vote['option']].append(self.client_collection.find_one({ '_id': vote['client_id'] })['name'])
 
-        print('banzai2')
+        print('survey')
         print(survey)
 
         return True, survey
