@@ -246,6 +246,10 @@ class SurveyPrompt(cmd.Cmd):
                 print('ID: {0}'.format(survey['_id']))
                 print('Título: {0}'.format(survey['title']))
                 print('Criado por: {0}'.format(survey['created_by']))
+                if survey['closed']:
+                    print('Status: encerrada')
+                else:
+                    print('Status: disponível')
                 print('Opções:')
                 for survey_option in survey['options']:
                     print(survey_option)

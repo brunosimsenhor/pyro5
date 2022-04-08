@@ -5,12 +5,14 @@ services:
     command: pyro5-ns -n nameserver
     environment:
       - "NS_AUTOCLEAN=3"
+      - "TZ=America/Sao_Paulo"
 
   db:
     image: mongo:5.0.6
     restart: always
     environment:
       - MONGO_INITDB_DATABASE=surveys
+      - "TZ=America/Sao_Paulo"
     volumes:
       - ./db:/data/db/
 
@@ -22,6 +24,7 @@ services:
     command: "python -u server.py"
     environment:
       - "NS_HOST=nameserver"
+      - "TZ=America/Sao_Paulo"
       - "DB_URI=mongodb://db:27017/surveys"
     volumes:
       - ./server.py:/app/server.py
@@ -34,6 +37,7 @@ services:
     command: "python -u cron.py"
     environment:
       - "NS_HOST=nameserver"
+      - "TZ=America/Sao_Paulo"
       - "DB_URI=mongodb://db:27017/surveys"
     volumes:
       - ./cron.py:/app/cron.py
@@ -45,6 +49,7 @@ services:
     command: "sleep infinity"
     environment:
       - "NS_HOST=nameserver"
+      - "TZ=America/Sao_Paulo"
     volumes:
       - ./client.py:/app/client.py
 
@@ -55,6 +60,7 @@ services:
     command: "sleep infinity"
     environment:
       - "NS_HOST=nameserver"
+      - "TZ=America/Sao_Paulo"
     volumes:
       - ./client.py:/app/client.py
 
@@ -65,5 +71,6 @@ services:
     command: "sleep infinity"
     environment:
       - "NS_HOST=nameserver"
+      - "TZ=America/Sao_Paulo"
     volumes:
       - ./client.py:/app/client.py

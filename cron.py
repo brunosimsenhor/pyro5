@@ -27,22 +27,19 @@ def closing_surveys():
         client_ids = [i['client_id'] for i in db.votes.find({ 'survey_id': survey['_id'] })]
 
         # retrieving the only a logged client
-        client = db.clients.find({ '_id': client_ids, 'logged': True })
+        clients = db.clients.find({ '_id': client_ids, 'logged': True })
 
-        # skip this if no client found
-        if not client:
-            continue
+        for client in client:
+            # when a client is found, we build the Pyro5 proxy
+            proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
-        # when a client is found, we build the Pyro5 proxy
-        proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
+            try:
+                # we try to notify the survey creator
+                proxy.notify_closed_survey(survey)
 
-        try:
-            # we try to notify the survey creator
-            proxy.notify_closed_survey(survey)
-
-        except suppress(Pyro5.errors.NamingError, Pyro5.errors.CommunicationError) as e:
-            # in case of this client is offline or unreachable, we set it as logged
-            db.clients.update_one({ _id: client['_id'] }, { '$set': { 'logged': True }})
+            except suppress(Pyro5.errors.NamingError, Pyro5.errors.CommunicationError) as e:
+                # in case of this client is offline or unreachable, we set it as logged
+                db.clients.update_one({ _id: client['_id'] }, { '$set': { 'logged': True }})
 
 schedule.every(15).seconds.do(closing_surveys)
 

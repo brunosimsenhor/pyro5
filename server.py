@@ -228,10 +228,7 @@ class SurveyRegister(object):
 
         surveys = []
 
-        # voted_surveys = [i['survey_id'] for i in db.votes.find({ 'client_id': client_id })]
-        # for row in self.survey_collection.find({ '_id': { '$nin': voted_surveys }, 'closed': False }):
-
-        for row in self.survey_collection.find({ 'closed': False }):
+        for row in self.survey_collection.find():
             row['created_by'] = self.client_collection.find_one({ '_id': row['created_by'] })['name']
             surveys.append(row)
 
@@ -341,7 +338,7 @@ class SurveyRegister(object):
             # if all clients voted, we notify them and close the survey
             if self.check_survey(survey):
                 self.notify_clients_closed_survey(survey)
-                self.close_survey(survey)
+                self.close_survey(survey['_id'])
 
             return True, ''
 
