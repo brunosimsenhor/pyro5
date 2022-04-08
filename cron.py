@@ -29,7 +29,7 @@ def closing_surveys():
         # retrieving the only a logged client
         clients = db.clients.find({ '_id': client_ids, 'logged': True })
 
-        for client in client:
+        for client in clients:
             # when a client is found, we build the Pyro5 proxy
             proxy = Pyro5.api.Proxy('PYRONAME:{0}'.format(client['pyro_ref']))
 
